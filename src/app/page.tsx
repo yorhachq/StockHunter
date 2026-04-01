@@ -2,6 +2,8 @@ import { DashboardShell } from "@/components/dashboard/dashboard-shell";
 import { buildPortfolioOverview } from "@/lib/domain/analytics";
 import { getDashboardData } from "@/lib/db/repository";
 
+export const dynamic = "force-dynamic";
+
 export default async function Home({
   searchParams,
 }: {

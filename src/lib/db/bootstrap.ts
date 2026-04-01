@@ -1,4 +1,5 @@
-import { readFile } from "node:fs/promises";
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import { appConfig } from "@/config/app-config";
 import { getDb } from "@/lib/db/client";
 
@@ -9,14 +10,14 @@ const globalBootstrap = globalThis as typeof globalThis & {
 export async function ensureDatabase() {
   if (!globalBootstrap.__stockHunterBootstrap) {
     globalBootstrap.__stockHunterBootstrap = (async () => {
-      const db = await getDb();
-      const schemaPath = new URL("./schema.sql", import.meta.url);
-      const schemaSql = await readFile(schemaPath, "utf8");
-      await db.exec(schemaSql);
+      const db = getDb();
+      const schemaPath = path.join(/* turbopackIgnore: true */ process.cwd(), "src", "lib", "db", "schema.sql");
+      const schemaSql = readFileSync(schemaPath, "utf8");
+      db.exec(schemaSql);
 
       if (appConfig.autoSeed) {
-        const result = await db.query<{ count: number }>("SELECT COUNT(*)::int AS count FROM instruments");
-        if ((result.rows[0]?.count ?? 0) === 0) {
+        const result = db.prepare("SELECT COUNT(*) AS count FROM instruments").get() as { count: number } | undefined;
+        if ((result?.count ?? 0) === 0) {
           const { seedDemoDataOnBoot } = await import("@/lib/db/repository");
           await seedDemoDataOnBoot();
         }
