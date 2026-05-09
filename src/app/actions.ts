@@ -2,141 +2,140 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
-import { z } from "zod";
-import { createInstrument, createReviewNote, createSnapshot, createTrade, seedDemoData } from "@/lib/db/repository";
-import { assetTypes, tradeTypes } from "@/lib/domain/types";
-
-function getString(formData: FormData, key: string) {
-  return String(formData.get(key) ?? "").trim();
-}
-
-function getNumber(formData: FormData, key: string, fallback = 0) {
-  const raw = getString(formData, key);
-  if (!raw) {
-    return fallback;
-  }
-
-  const value = Number(raw);
-  return Number.isFinite(value) ? value : fallback;
-}
+import { ZodError } from "zod";
+import {
+  createInstrument,
+  createReviewNote,
+  createSnapshot,
+  createTrade,
+  getDashboardData,
+  seedDemoData,
+} from "@/lib/db/repository";
+import { buildPortfolioOverview } from "@/lib/domain/analytics";
+import { instrumentFormSchema, reviewFormSchema, snapshotFormSchema, tradeFormSchema } from "@/lib/forms/schemas";
+import { type ActionFormState, initialActionFormState, type FormFieldErrors } from "@/lib/forms/state";
 
 function redirectBack(instrumentId?: string | null) {
   revalidatePath("/");
   redirect(instrumentId ? `/?instrument=${instrumentId}` : "/");
 }
 
-const instrumentSchema = z.object({
-  symbol: z.string().min(1, "请输入代码"),
-  name: z.string().min(1, "请输入名称"),
-  market: z.string().min(1, "请输入市场"),
-  assetType: z.enum(assetTypes),
-  currency: z.string().min(1, "请输入币种"),
-  notes: z.string().optional(),
-  targetPositionAmount: z.number().nonnegative(),
-  maxPositionAmount: z.number().nonnegative(),
-  buyStepRatio: z.number().min(0).max(1),
-  sellStepRatio: z.number().min(0).max(1),
-  reboundRatio: z.number().min(0).max(1),
-});
+function buildErrorState(error: unknown, fallbackMessage: string): ActionFormState {
+  if (error instanceof ZodError) {
+    return {
+      success: false,
+      message: "请修正表单中的错误后再提交。",
+      fieldErrors: error.flatten().fieldErrors,
+      formErrors: error.flatten().formErrors,
+    };
+  }
 
-const tradeSchema = z.object({
-  instrumentId: z.string().uuid(),
-  tradeDate: z.string().min(1),
-  tradeType: z.enum(tradeTypes),
-  quantity: z.number().nonnegative(),
-  price: z.number().nonnegative(),
-  fee: z.number().nonnegative(),
-  tax: z.number().nonnegative(),
-  cashAmount: z.number().nonnegative(),
-  reason: z.string().optional(),
-  thesis: z.string().optional(),
-  confidence: z.number().int().min(1).max(5).nullable(),
-});
-
-const snapshotSchema = z.object({
-  instrumentId: z.string().uuid(),
-  snapshotDate: z.string().min(1),
-  closePrice: z.number().positive(),
-  highPrice: z.number().positive().nullable(),
-  lowPrice: z.number().positive().nullable(),
-  volume: z.number().nonnegative().nullable(),
-  note: z.string().optional(),
-});
-
-const reviewSchema = z.object({
-  instrumentId: z.string().uuid(),
-  reviewDate: z.string().min(1),
-  title: z.string().min(1),
-  mood: z.string().optional(),
-  content: z.string().min(1),
-  actionPlan: z.string().optional(),
-});
-
-export async function createInstrumentAction(formData: FormData) {
-  const parsed = instrumentSchema.parse({
-    symbol: getString(formData, "symbol"),
-    name: getString(formData, "name"),
-    market: getString(formData, "market"),
-    assetType: getString(formData, "assetType"),
-    currency: getString(formData, "currency"),
-    notes: getString(formData, "notes"),
-    targetPositionAmount: getNumber(formData, "targetPositionAmount"),
-    maxPositionAmount: getNumber(formData, "maxPositionAmount"),
-    buyStepRatio: getNumber(formData, "buyStepRatio"),
-    sellStepRatio: getNumber(formData, "sellStepRatio"),
-    reboundRatio: getNumber(formData, "reboundRatio"),
-  });
-
-  const instrumentId = await createInstrument(parsed);
-  redirectBack(instrumentId);
+  return {
+    success: false,
+    message: fallbackMessage,
+    fieldErrors: {},
+    formErrors: [fallbackMessage],
+  };
 }
 
-export async function createTradeAction(formData: FormData) {
-  const parsed = tradeSchema.parse({
-    instrumentId: getString(formData, "instrumentId"),
-    tradeDate: getString(formData, "tradeDate"),
-    tradeType: getString(formData, "tradeType"),
-    quantity: getNumber(formData, "quantity"),
-    price: getNumber(formData, "price"),
-    fee: getNumber(formData, "fee"),
-    tax: getNumber(formData, "tax"),
-    cashAmount: getNumber(formData, "cashAmount"),
-    reason: getString(formData, "reason"),
-    thesis: getString(formData, "thesis"),
-    confidence: getString(formData, "confidence") ? getNumber(formData, "confidence") : null,
-  });
-
-  await createTrade(parsed);
-  redirectBack(parsed.instrumentId);
+function toRecord(formData: FormData) {
+  return Object.fromEntries(formData.entries());
 }
 
-export async function createSnapshotAction(formData: FormData) {
-  const parsed = snapshotSchema.parse({
-    instrumentId: getString(formData, "instrumentId"),
-    snapshotDate: getString(formData, "snapshotDate"),
-    closePrice: getNumber(formData, "closePrice"),
-    highPrice: getString(formData, "highPrice") ? getNumber(formData, "highPrice") : null,
-    lowPrice: getString(formData, "lowPrice") ? getNumber(formData, "lowPrice") : null,
-    volume: getString(formData, "volume") ? getNumber(formData, "volume") : null,
-    note: getString(formData, "note"),
+async function validateTradeBusinessRules(input: ReturnType<typeof tradeFormSchema.parse>): Promise<FormFieldErrors | null> {
+  const data = await getDashboardData();
+  const overview = buildPortfolioOverview({
+    ...data,
+    selectedInstrumentId: input.instrumentId,
   });
+  const analytics = overview.analyticsList.find((item) => item.instrument.id === input.instrumentId);
 
-  await createSnapshot(parsed);
-  redirectBack(parsed.instrumentId);
+  if (!analytics) {
+    const errors: FormFieldErrors = {
+      instrumentId: ["标的不存在，请刷新页面后重试。"],
+    };
+    return errors;
+  }
+
+  if (input.tradeType === "SELL" && input.quantity > analytics.quantityHeld) {
+    const errors: FormFieldErrors = {
+      quantity: [`卖出数量不能超过当前持仓数量 ${analytics.quantityHeld.toFixed(2)}。`],
+    };
+    return errors;
+  }
+
+  return null;
 }
 
-export async function createReviewAction(formData: FormData) {
-  const parsed = reviewSchema.parse({
-    instrumentId: getString(formData, "instrumentId"),
-    reviewDate: getString(formData, "reviewDate"),
-    title: getString(formData, "title"),
-    mood: getString(formData, "mood"),
-    content: getString(formData, "content"),
-    actionPlan: getString(formData, "actionPlan"),
-  });
+export async function createInstrumentAction(
+  _prevState: ActionFormState,
+  formData: FormData,
+): Promise<ActionFormState> {
+  try {
+    const parsed = instrumentFormSchema.parse(toRecord(formData));
+    const instrumentId = await createInstrument(parsed);
+    redirectBack(instrumentId);
+  } catch (error) {
+    return buildErrorState(error, "保存标的失败，请稍后重试。");
+  }
 
-  await createReviewNote(parsed);
-  redirectBack(parsed.instrumentId);
+  return initialActionFormState;
+}
+
+export async function createTradeAction(
+  _prevState: ActionFormState,
+  formData: FormData,
+): Promise<ActionFormState> {
+  try {
+    const parsed = tradeFormSchema.parse(toRecord(formData));
+    const businessErrors = await validateTradeBusinessRules(parsed);
+
+    if (businessErrors) {
+      return {
+        ...initialActionFormState,
+        message: "请修正交易数据后再提交。",
+        fieldErrors: businessErrors,
+        formErrors: [],
+      };
+    }
+
+    await createTrade(parsed);
+    redirectBack(parsed.instrumentId);
+  } catch (error) {
+    return buildErrorState(error, "写入交易失败，请稍后重试。");
+  }
+
+  return initialActionFormState;
+}
+
+export async function createSnapshotAction(
+  _prevState: ActionFormState,
+  formData: FormData,
+): Promise<ActionFormState> {
+  try {
+    const parsed = snapshotFormSchema.parse(toRecord(formData));
+    await createSnapshot(parsed);
+    redirectBack(parsed.instrumentId);
+  } catch (error) {
+    return buildErrorState(error, "保存价格快照失败，请稍后重试。");
+  }
+
+  return initialActionFormState;
+}
+
+export async function createReviewAction(
+  _prevState: ActionFormState,
+  formData: FormData,
+): Promise<ActionFormState> {
+  try {
+    const parsed = reviewFormSchema.parse(toRecord(formData));
+    await createReviewNote(parsed);
+    redirectBack(parsed.instrumentId);
+  } catch (error) {
+    return buildErrorState(error, "保存复盘记录失败，请稍后重试。");
+  }
+
+  return initialActionFormState;
 }
 
 export async function seedDemoAction() {
