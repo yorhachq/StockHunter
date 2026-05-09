@@ -84,6 +84,15 @@ export interface ChartPoint {
   avgCost: number | null;
   quantity: number;
   realizedPnl: number;
+  trades: TradeRow[];
+}
+
+export interface PortfolioContribution {
+  marketValueRatio: number | null;
+  costBasisRatio: number | null;
+  unrealizedPnlRatio: number | null;
+  realizedPnlRatio: number | null;
+  quantityRatio: number | null;
 }
 
 export interface InstrumentAnalytics {
@@ -108,6 +117,7 @@ export interface InstrumentAnalytics {
   lastTrade: TradeRow | null;
   lastSnapshot: SnapshotRow | null;
   chartPoints: ChartPoint[];
+  contribution: PortfolioContribution;
   suggestion: DecisionSuggestion;
 }
 
@@ -120,5 +130,6 @@ export interface PortfolioOverview {
     realizedPnl: number;
     unrealizedPnl: number;
     dividendIncome: number;
+    quantityHeld: number;
   };
 }

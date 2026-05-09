@@ -344,3 +344,50 @@ textarea {
   text-align: center;
   color: var(--muted);
 }
+
+.contribution-row {
+  border: 1px solid rgba(36, 50, 70, 0.08);
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.34);
+  padding: 14px;
+}
+
+.contribution-bar {
+  overflow: hidden;
+  height: 8px;
+  margin: 10px 0 8px;
+  border-radius: 999px;
+  background: rgba(36, 50, 70, 0.08);
+}
+
+.contribution-fill,
+.contribution-fill-positive,
+.contribution-fill-negative {
+  height: 100%;
+  border-radius: inherit;
+}
+
+.contribution-fill {
+  background: linear-gradient(90deg, rgba(30, 63, 102, 0.8), rgba(37, 83, 109, 0.95));
+}
+
+.contribution-fill-positive {
+  background: linear-gradient(90deg, rgba(39, 126, 98, 0.72), rgba(39, 126, 98, 1));
+}
+
+.contribution-fill-negative {
+  background: linear-gradient(90deg, rgba(193, 84, 62, 0.72), rgba(193, 84, 62, 1));
+}
+
+.contribution-mini-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+
+.contribution-mini-header strong {
+  color: var(--ink-strong);
+}

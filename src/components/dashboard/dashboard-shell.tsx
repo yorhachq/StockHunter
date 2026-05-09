@@ -49,6 +49,87 @@ function SummaryMetric({ label, value, hint, tone }: { label: string; value: str
   );
 }
 
+function RatioText({ value }: { value: number | null }) {
+  return <>{value === null ? "--" : formatPercent(value)}</>;
+}
+
+function ContributionBar({ value, tone = "neutral" }: { value: number | null; tone?: "neutral" | "positive" | "negative" }) {
+  const width = value === null ? 0 : Math.min(Math.abs(value), 1) * 100;
+  const className = tone === "positive" ? "contribution-fill-positive" : tone === "negative" ? "contribution-fill-negative" : "contribution-fill";
+
+  return (
+    <div className="contribution-bar" aria-hidden="true">
+      <div className={className} style={{ width: `${width}%` }} />
+    </div>
+  );
+}
+
+function ContributionPanel({ analytics }: { analytics: InstrumentAnalytics }) {
+  const items: Array<{
+    label: string;
+    value: number | null;
+    tone: "neutral" | "positive" | "negative";
+    hint: string;
+  }> = [
+    {
+      label: "市值占比",
+      value: analytics.contribution.marketValueRatio,
+      tone: "neutral" as const,
+      hint: `当前市值 ${formatMoney(analytics.marketValue, analytics.instrument.currency)}`,
+    },
+    {
+      label: "成本占比",
+      value: analytics.contribution.costBasisRatio,
+      tone: "neutral" as const,
+      hint: `持仓成本 ${formatMoney(analytics.costBasis, analytics.instrument.currency)}`,
+    },
+    {
+      label: "浮盈贡献",
+      value: analytics.contribution.unrealizedPnlRatio,
+      tone: analytics.unrealizedPnl !== null && analytics.unrealizedPnl < 0 ? "negative" : "positive",
+      hint: `浮动盈亏 ${formatMoney(analytics.unrealizedPnl, analytics.instrument.currency)}`,
+    },
+    {
+      label: "已实现贡献",
+      value: analytics.contribution.realizedPnlRatio,
+      tone: analytics.realizedPnl < 0 ? "negative" : "positive",
+      hint: `已实现收益 ${formatMoney(analytics.realizedPnl, analytics.instrument.currency)}`,
+    },
+    {
+      label: "份额占比",
+      value: analytics.contribution.quantityRatio,
+      tone: "neutral" as const,
+      hint: `当前持有 ${formatNumber(analytics.quantityHeld, 2)} 份`,
+    },
+  ];
+
+  return (
+    <section className="panel space-y-4">
+      <div className="section-header">
+        <div>
+          <p className="section-kicker">组合贡献</p>
+          <h3>看清这个标的在总仓里的分量</h3>
+        </div>
+      </div>
+
+      <div className="space-y-3">
+        {items.map((item) => (
+          <div key={item.label} className="contribution-row">
+            <div className="flex items-center justify-between gap-3">
+              <span className="text-sm text-[var(--muted)]">{item.label}</span>
+              <strong className={`text-sm ${toneClass(item.value === null ? null : item.value)}`}>
+                <RatioText value={item.value} />
+              </strong>
+            </div>
+            <ContributionBar value={item.value} tone={item.tone} />
+            <p className="metric-hint">{item.hint}</p>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 function SelectedInstrumentPanel({ analytics }: { analytics: InstrumentAnalytics }) {
   const profitRate = analytics.costBasis > 0 && analytics.unrealizedPnl !== null ? analytics.unrealizedPnl / analytics.costBasis : null;
 
@@ -219,6 +300,7 @@ function Sidebar({ overview }: { overview: PortfolioOverview }) {
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-1">
         <SummaryMetric label="组合总市值" value={formatMoney(overview.totals.marketValue)} hint={`成本 ${formatMoney(overview.totals.costBasis)}`} />
         <SummaryMetric label="组合总盈亏" value={formatMoney(overview.totals.unrealizedPnl)} hint={`已实现 ${formatMoney(overview.totals.realizedPnl)}`} tone={toneClass(overview.totals.unrealizedPnl)} />
+        <SummaryMetric label="组合总份额" value={formatNumber(overview.totals.quantityHeld, 2)} hint={`分红累计 ${formatMoney(overview.totals.dividendIncome)}`} />
       </div>
 
       <div className="space-y-3 border-t border-[var(--line)] pt-5">
@@ -234,13 +316,33 @@ function Sidebar({ overview }: { overview: PortfolioOverview }) {
               const active = overview.selected?.instrument.id === item.instrument.id;
               return (
                 <Link key={item.instrument.id} href={`/?instrument=${item.instrument.id}`} className={`instrument-link ${active ? "instrument-link-active" : ""}`}>
-                  <div>
-                    <p className="text-base font-medium text-[var(--ink-strong)]">{item.instrument.name}</p>
-                    <p className="text-xs uppercase tracking-[0.18em] text-[var(--muted)]">{item.instrument.market} · {item.instrument.symbol}</p>
-                  </div>
-                  <div className="text-right">
-                    <p className="font-mono text-sm text-[var(--ink-strong)]">{formatNumber(item.currentPrice, 4)}</p>
-                    <p className={`text-xs ${toneClass(item.unrealizedPnl)}`}>{formatMoney(item.unrealizedPnl, item.instrument.currency)}</p>
+                  <div className="flex-1 space-y-2">
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <p className="text-base font-medium text-[var(--ink-strong)]">{item.instrument.name}</p>
+                        <p className="text-xs uppercase tracking-[0.18em] text-[var(--muted)]">{item.instrument.market} · {item.instrument.symbol}</p>
+                      </div>
+                      <div className="text-right">
+                        <p className="font-mono text-sm text-[var(--ink-strong)]">{formatNumber(item.currentPrice, 4)}</p>
+                        <p className={`text-xs ${toneClass(item.unrealizedPnl)}`}>{formatMoney(item.unrealizedPnl, item.instrument.currency)}</p>
+                      </div>
+                    </div>
+                    <div className="space-y-2">
+                      <div>
+                        <div className="contribution-mini-header">
+                          <span>资金占比</span>
+                          <strong><RatioText value={item.contribution.marketValueRatio} /></strong>
+                        </div>
+                        <ContributionBar value={item.contribution.marketValueRatio} />
+                      </div>
+                      <div>
+                        <div className="contribution-mini-header">
+                          <span>浮盈贡献</span>
+                          <strong className={toneClass(item.unrealizedPnl)}><RatioText value={item.contribution.unrealizedPnlRatio} /></strong>
+                        </div>
+                        <ContributionBar value={item.contribution.unrealizedPnlRatio} tone={item.unrealizedPnl !== null && item.unrealizedPnl < 0 ? "negative" : "positive"} />
+                      </div>
+                    </div>
                   </div>
                 </Link>
               );
@@ -279,7 +381,10 @@ export function DashboardShell({ overview }: { overview: PortfolioOverview }) {
                 <SelectedInstrumentPanel analytics={overview.selected} />
                 <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
                   <PriceBandChart analytics={overview.selected} />
-                  <DecisionPanel analytics={overview.selected} />
+                  <div className="space-y-4">
+                    <DecisionPanel analytics={overview.selected} />
+                    <ContributionPanel analytics={overview.selected} />
+                  </div>
                 </div>
                 <PositionHistoryChart analytics={overview.selected} />
                 <TradeLedger analytics={overview.selected} />

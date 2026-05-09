@@ -3,6 +3,7 @@ import type {
   ChartPoint,
   InstrumentAnalytics,
   InstrumentRow,
+  PortfolioContribution,
   PortfolioOverview,
   ReviewNoteRow,
   SnapshotRow,
@@ -29,6 +30,27 @@ function standardDeviation(values: number[]) {
   const mean = values.reduce((sum, value) => sum + value, 0) / values.length;
   const variance = values.reduce((sum, value) => sum + (value - mean) ** 2, 0) / values.length;
   return Math.sqrt(variance);
+}
+
+function ratioOf(value: number | null, total: number) {
+  if (value === null || total === 0) {
+    return null;
+  }
+
+  return round(value / total, 4);
+}
+
+function buildContribution(
+  item: InstrumentAnalytics,
+  totals: PortfolioOverview["totals"],
+): PortfolioContribution {
+  return {
+    marketValueRatio: ratioOf(item.marketValue, totals.marketValue),
+    costBasisRatio: ratioOf(item.costBasis, totals.costBasis),
+    unrealizedPnlRatio: ratioOf(item.unrealizedPnl, totals.unrealizedPnl),
+    realizedPnlRatio: ratioOf(item.realizedPnl, totals.realizedPnl),
+    quantityRatio: ratioOf(item.quantityHeld, totals.quantityHeld),
+  };
 }
 
 function buildInstrumentAnalytics(
@@ -146,6 +168,7 @@ function buildInstrumentAnalytics(
       avgCost: quantityHeld > 0 ? costBasis / quantityHeld : null,
       quantity: round(quantityHeld),
       realizedPnl: round(realizedPnl, 2),
+      trades: dailyTrades,
     });
   }
 
@@ -180,7 +203,7 @@ function buildInstrumentAnalytics(
   if (currentPrice !== null && currentPrice <= buyZoneHigh) {
     status = "BUY_ZONE";
     headline = currentPrice <= buyZoneLow ? "进入强关注补仓带" : "接近计划买入区间";
-    detail = `当前价格已回落至成本线下方，结合步长参数与波动率，适合按计划分批试探，不要一次性打满仓位。`;
+    detail = "当前价格已回落至成本线下方，结合步长参数与波动率，适合按计划分批试探，不要一次性打满仓位。";
     action = positionUsage >= 1 ? "仓位已接近上限，优先等待确认反弹。" : `可先投入剩余仓位的 ${positionUsage < 0.5 ? "20%~30%" : "10%~15%"}。`;
   } else if (currentPrice !== null && currentPrice >= sellZoneLow) {
     status = "SELL_ZONE";
@@ -216,6 +239,13 @@ function buildInstrumentAnalytics(
     lastTrade: sortedTrades.at(-1) ?? null,
     lastSnapshot: sortedSnapshots.at(-1) ?? null,
     chartPoints,
+    contribution: {
+      marketValueRatio: null,
+      costBasisRatio: null,
+      unrealizedPnlRatio: null,
+      realizedPnlRatio: null,
+      quantityRatio: null,
+    },
     suggestion: {
       status,
       headline,
@@ -229,7 +259,7 @@ function buildInstrumentAnalytics(
 }
 
 export function buildPortfolioOverview(input: BuildOverviewInput): PortfolioOverview {
-  const analyticsList = input.instruments.map((instrument) =>
+  const analyticsSeed = input.instruments.map((instrument) =>
     buildInstrumentAnalytics(
       instrument,
       input.trades.filter((trade) => trade.instrument_id === instrument.id),
@@ -238,17 +268,25 @@ export function buildPortfolioOverview(input: BuildOverviewInput): PortfolioOver
     ),
   );
 
+  const totals = {
+    marketValue: round(analyticsSeed.reduce((sum, item) => sum + (item.marketValue ?? 0), 0), 2),
+    costBasis: round(analyticsSeed.reduce((sum, item) => sum + item.costBasis, 0), 2),
+    realizedPnl: round(analyticsSeed.reduce((sum, item) => sum + item.realizedPnl, 0), 2),
+    unrealizedPnl: round(analyticsSeed.reduce((sum, item) => sum + (item.unrealizedPnl ?? 0), 0), 2),
+    dividendIncome: round(analyticsSeed.reduce((sum, item) => sum + item.dividendIncome, 0), 2),
+    quantityHeld: round(analyticsSeed.reduce((sum, item) => sum + item.quantityHeld, 0), 4),
+  };
+
+  const analyticsList = analyticsSeed.map((item) => ({
+    ...item,
+    contribution: buildContribution(item, totals),
+  }));
+
   const selected = analyticsList.find((item) => item.instrument.id === input.selectedInstrumentId) ?? analyticsList[0] ?? null;
 
   return {
     analyticsList,
     selected,
-    totals: {
-      marketValue: round(analyticsList.reduce((sum, item) => sum + (item.marketValue ?? 0), 0), 2),
-      costBasis: round(analyticsList.reduce((sum, item) => sum + item.costBasis, 0), 2),
-      realizedPnl: round(analyticsList.reduce((sum, item) => sum + item.realizedPnl, 0), 2),
-      unrealizedPnl: round(analyticsList.reduce((sum, item) => sum + (item.unrealizedPnl ?? 0), 0), 2),
-      dividendIncome: round(analyticsList.reduce((sum, item) => sum + item.dividendIncome, 0), 2),
-    },
+    totals,
   };
 }
