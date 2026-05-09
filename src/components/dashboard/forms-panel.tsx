@@ -9,12 +9,14 @@ import {
   seedDemoAction,
 } from "@/app/actions";
 import { SubmitButton } from "@/components/ui/submit-button";
-import { assetTypes, tradeTypes, type InstrumentRow, type TradeType } from "@/lib/domain/types";
+import { formatMoney, formatNumber } from "@/lib/domain/format";
+import { assetTypes, tradeTypes, type InstrumentAnalytics, type InstrumentRow, type TradeType } from "@/lib/domain/types";
 import { initialActionFormState, type ActionFormState } from "@/lib/forms/state";
 
 type FormsPanelProps = {
   instruments: InstrumentRow[];
   selectedInstrumentId: string | null;
+  selectedAnalytics: InstrumentAnalytics | null;
 };
 
 const today = new Date().toISOString().slice(0, 10);
@@ -518,7 +520,182 @@ function ReviewForm({ instruments, selectedInstrumentId }: { instruments: Instru
   );
 }
 
-export function FormsPanel({ instruments, selectedInstrumentId }: FormsPanelProps) {
+function roundShares(value: number) {
+  return Math.round(value * 100) / 100;
+}
+
+type ShareCalculatorResult =
+  | { kind: "error"; error: string }
+  | {
+      kind: "ready";
+      nav: number;
+      sellShares: number;
+      estimatedSellAmount: number;
+      remainingShares: number;
+      remainingAmount: number;
+    };
+
+function ShareCalculatorPanel({ analytics }: { analytics: InstrumentAnalytics | null }) {
+  const [navMode, setNavMode] = useState<"manual" | "derived">("manual");
+  const [targetMode, setTargetMode] = useState<"sell" | "keep">("sell");
+  const [manualNav, setManualNav] = useState(analytics?.currentPrice ? analytics.currentPrice.toFixed(4) : "");
+  const [holdingAmount, setHoldingAmount] = useState(analytics?.marketValue ? analytics.marketValue.toFixed(2) : "");
+  const [holdingShares, setHoldingShares] = useState(analytics?.quantityHeld ? analytics.quantityHeld.toFixed(2) : "");
+  const [targetAmount, setTargetAmount] = useState("");
+
+  const result = useMemo((): ShareCalculatorResult => {
+    const amount = Number(holdingAmount || 0);
+    const shares = Number(holdingShares || 0);
+    const manualValue = Number(manualNav || 0);
+    const target = Number(targetAmount || 0);
+
+    if (navMode === "manual") {
+      if (manualValue <= 0) {
+        return { kind: "error", error: "请填写大于 0 的净值。" };
+      }
+    }
+
+    if (navMode === "derived") {
+      if (amount <= 0) {
+        return { kind: "error", error: "持仓金额必须大于 0，才能反推净值。" };
+      }
+      if (shares <= 0) {
+        return { kind: "error", error: "持有份额必须大于 0，才能反推净值。" };
+      }
+    }
+
+    const nav = navMode === "manual" ? manualValue : amount / shares;
+    if (nav <= 0) {
+      return { kind: "error", error: "净值计算失败，请检查输入。" };
+    }
+
+    if (amount <= 0) {
+      return { kind: "error", error: "当前持仓金额必须大于 0。" };
+    }
+
+    if (shares <= 0) {
+      return { kind: "error", error: "当前持有份额必须大于 0。" };
+    }
+
+    if (target <= 0) {
+      return { kind: "error", error: targetMode === "sell" ? "请输入想卖出的金额。" : "请输入卖出后想保留的金额。" };
+    }
+
+    const desiredSellAmount = targetMode === "sell" ? target : amount - target;
+    if (targetMode === "sell" && target > amount) {
+      return { kind: "error", error: "想卖出的金额不能超过当前持仓金额。" };
+    }
+    if (targetMode === "keep" && target >= amount) {
+      return { kind: "error", error: "想保留的金额必须小于当前持仓金额。" };
+    }
+    if (desiredSellAmount <= 0) {
+      return { kind: "error", error: "卖出金额必须大于 0。" };
+    }
+
+    const sellShares = roundShares(desiredSellAmount / nav);
+    if (sellShares > shares) {
+      return { kind: "error", error: "估算后卖出份额超过当前持仓份额，请检查输入。" };
+    }
+
+    const estimatedSellAmount = sellShares * nav;
+    const remainingShares = Math.max(0, shares - sellShares);
+    const remainingAmount = remainingShares * nav;
+
+    return {
+      kind: "ready",
+      nav,
+      sellShares,
+      estimatedSellAmount,
+      remainingShares,
+      remainingAmount,
+    };
+  }, [holdingAmount, holdingShares, manualNav, navMode, targetAmount, targetMode]);
+
+  return (
+    <section className="panel space-y-4">
+      <div className="section-header">
+        <div>
+          <p className="section-kicker">工具面板</p>
+          <h3>基金卖出份额速算器</h3>
+        </div>
+      </div>
+
+      <p className="text-sm leading-7 text-[var(--muted)]">
+        {analytics ? `已带入 ${analytics.instrument.name} 的最新持仓数据，你也可以手工覆盖。` : "可直接填写当前持仓金额、份额和目标卖出金额，快速换算应该提交的卖出份额。"}
+      </p>
+
+      <div className="field-grid field-grid-2">
+        <label className="tool-option">
+          <input checked={navMode === "manual"} type="radio" name="navMode" onChange={() => setNavMode("manual")} />
+          <span>直接填写净值</span>
+        </label>
+        <label className="tool-option">
+          <input checked={navMode === "derived"} type="radio" name="navMode" onChange={() => setNavMode("derived")} />
+          <span>根据金额和份额反推净值</span>
+        </label>
+      </div>
+
+      {navMode === "manual" ? (
+        <div>
+          <input className="field" value={manualNav} onChange={(event) => setManualNav(event.currentTarget.value)} placeholder="当前净值，例如 1.2345" type="number" min="0" step="0.0001" />
+        </div>
+      ) : null}
+
+      <div className="field-grid field-grid-2">
+        <input className="field" value={holdingAmount} onChange={(event) => setHoldingAmount(event.currentTarget.value)} placeholder="当前持仓金额" type="number" min="0" step="0.01" />
+        <input className="field" value={holdingShares} onChange={(event) => setHoldingShares(event.currentTarget.value)} placeholder="当前持有份额" type="number" min="0" step="0.01" />
+      </div>
+
+      <div className="field-grid field-grid-2">
+        <label className="tool-option">
+          <input checked={targetMode === "sell"} type="radio" name="targetMode" onChange={() => setTargetMode("sell")} />
+          <span>我想卖出多少金额</span>
+        </label>
+        <label className="tool-option">
+          <input checked={targetMode === "keep"} type="radio" name="targetMode" onChange={() => setTargetMode("keep")} />
+          <span>卖出后想保留多少金额</span>
+        </label>
+      </div>
+
+      <input className="field" value={targetAmount} onChange={(event) => setTargetAmount(event.currentTarget.value)} placeholder={targetMode === "sell" ? "目标卖出金额" : "目标保留金额"} type="number" min="0" step="0.01" />
+
+      {result.kind === "error" ? (
+        <div className="form-message" role="alert">
+          <p>{result.error}</p>
+        </div>
+      ) : (
+        <div className="space-y-3 rounded-[24px] bg-[rgba(30,63,102,0.05)] p-4">
+          <div className="decision-row">
+            <span>当前净值</span>
+            <strong>{formatNumber(result.nav, 4)}</strong>
+          </div>
+          <div className="decision-row">
+            <span>应卖份额</span>
+            <strong>{formatNumber(result.sellShares, 2)} 份</strong>
+          </div>
+          <div className="decision-row">
+            <span>估算卖出金额</span>
+            <strong>{formatMoney(result.estimatedSellAmount, analytics?.instrument.currency ?? "CNY")}</strong>
+          </div>
+          <div className="decision-row">
+            <span>剩余份额</span>
+            <strong>{formatNumber(result.remainingShares, 2)} 份</strong>
+          </div>
+          <div className="decision-row">
+            <span>剩余金额</span>
+            <strong>{formatMoney(result.remainingAmount, analytics?.instrument.currency ?? "CNY")}</strong>
+          </div>
+        </div>
+      )}
+
+      <p className="text-xs leading-6 text-[var(--muted)]">
+        结果按 0.01 份估算，不包含赎回费、到账延迟和未知确认净值偏差，实际成交请以平台确认结果为准。
+      </p>
+    </section>
+  );
+}
+
+export function FormsPanel({ instruments, selectedInstrumentId, selectedAnalytics }: FormsPanelProps) {
   const hasInstruments = instruments.length > 0;
 
   return (
@@ -541,6 +718,7 @@ export function FormsPanel({ instruments, selectedInstrumentId }: FormsPanelProp
       ) : null}
 
       <InstrumentForm />
+      <ShareCalculatorPanel key={selectedAnalytics?.instrument.id ?? "empty"} analytics={selectedAnalytics} />
 
       {hasInstruments ? (
         <>

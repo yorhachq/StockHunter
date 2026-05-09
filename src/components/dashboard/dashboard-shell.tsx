@@ -395,7 +395,11 @@ export function DashboardShell({ overview }: { overview: PortfolioOverview }) {
             )}
           </div>
 
-          <FormsPanel instruments={overview.analyticsList.map((item) => item.instrument)} selectedInstrumentId={overview.selected?.instrument.id ?? null} />
+          <FormsPanel
+            instruments={overview.analyticsList.map((item) => item.instrument)}
+            selectedInstrumentId={overview.selected?.instrument.id ?? null}
+            selectedAnalytics={overview.selected}
+          />
         </div>
       </div>
     </div>

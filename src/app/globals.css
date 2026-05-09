@@ -391,3 +391,19 @@ textarea {
 .contribution-mini-header strong {
   color: var(--ink-strong);
 }
+
+.tool-option {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid rgba(36, 50, 70, 0.12);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.58);
+  padding: 12px 14px;
+  font-size: 0.9rem;
+  color: var(--ink);
+}
+
+.tool-option input {
+  accent-color: var(--gold);
+}
